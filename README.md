@@ -67,7 +67,7 @@ On **259 repos** (`~/.config/gita/repos.csv`, macOS, release build, `--jobs 64`)
 | Cold (`--refresh` or no cache) | **~3.6-3.8s** (259× `git status`; git subprocess floor on this machine) |
 | Warm (unchanged repos, cache hit) | **~0.03-0.35s** (fingerprint scan of 259 repos adds ~0.3s) |
 
-Cold time is dominated by **one git subprocess per repo** (status + show-branch + log). Large worktrees and `--full-status` increase cost. The cache keys on `HEAD`, index mtime, and stash log mtime so normal `gita ll` stays instant when nothing changed.
+Cold time is dominated by **one git subprocess per repo** (status + show-branch + log). Large worktrees and `--full-status` increase cost. The cache keys on `HEAD`, index mtime, stash log mtime, and `FETCH_HEAD` mtime (so `gita fetch` invalidates ahead/behind) so normal `gita ll` stays instant when nothing changed.
 
 Measure locally:
 

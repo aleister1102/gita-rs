@@ -25,10 +25,11 @@ struct CacheEntry {
     head: String,
     index_mtime: u64,
     stash_mtime: u64,
+    fetch_head_mtime: u64,
     snap: RepoSnapshot,
 }
 
-const LL_CACHE_VERSION: u32 = 2;
+const LL_CACHE_VERSION: u32 = 3;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LlCache {
@@ -70,7 +71,11 @@ impl LlCache {
 
     pub fn get_snap(&self, path: &str, fp: &RepoFingerprint) -> Option<RepoSnapshot> {
         let e = self.repos.get(path)?;
-        if e.head == fp.head && e.index_mtime == fp.index_mtime && e.stash_mtime == fp.stash_mtime {
+        if e.head == fp.head
+            && e.index_mtime == fp.index_mtime
+            && e.stash_mtime == fp.stash_mtime
+            && e.fetch_head_mtime == fp.fetch_head_mtime
+        {
             Some(e.snap.clone())
         } else {
             None
@@ -84,6 +89,7 @@ impl LlCache {
                 head: fp.head,
                 index_mtime: fp.index_mtime,
                 stash_mtime: fp.stash_mtime,
+                fetch_head_mtime: fp.fetch_head_mtime,
                 snap,
             },
         );
@@ -95,16 +101,18 @@ pub struct RepoFingerprint {
     pub head: String,
     pub index_mtime: u64,
     pub stash_mtime: u64,
+    pub fetch_head_mtime: u64,
 }
 
 impl RepoFingerprint {
     pub fn read(prop: &RepoProp) -> Option<Self> {
         let head = read_head_oid(&prop.path, &prop.flags)?;
-        let (index_path, stash_path) = git_dir_paths(&prop.path, &prop.flags);
+        let (index_path, stash_path, fetch_head_path) = git_dir_paths(&prop.path, &prop.flags);
         Some(Self {
             head,
             index_mtime: mtime_secs(&index_path),
             stash_mtime: mtime_secs(&stash_path),
+            fetch_head_mtime: mtime_secs(&fetch_head_path),
         })
     }
 
@@ -113,6 +121,7 @@ impl RepoFingerprint {
             head: String::new(),
             index_mtime: 0,
             stash_mtime: 0,
+            fetch_head_mtime: 0,
         }
     }
 }
@@ -184,11 +193,12 @@ fn read_head_oid_at(root: &Path) -> Option<String> {
     Some(head.to_string())
 }
 
-pub fn git_dir_paths(repo_path: &str, flags: &[String]) -> (PathBuf, PathBuf) {
+pub fn git_dir_paths(repo_path: &str, flags: &[String]) -> (PathBuf, PathBuf, PathBuf) {
     if let Some(gd) = resolve_git_dir(repo_path, flags) {
         return (
             gd.join("index"),
             gd.join("logs").join("refs").join("stash"),
+            gd.join("FETCH_HEAD"),
         );
     }
     let root = Path::new(repo_path);
@@ -196,6 +206,7 @@ pub fn git_dir_paths(repo_path: &str, flags: &[String]) -> (PathBuf, PathBuf) {
     (
         git_dir.join("index"),
         git_dir.join("logs").join("refs").join("stash"),
+        git_dir.join("FETCH_HEAD"),
     )
 }
 
@@ -208,7 +219,7 @@ pub fn collect_snapshot(prop: &RepoProp, opts: SnapshotOpts) -> RepoSnapshot {
 }
 
 fn collect_snapshot_inner(prop: &RepoProp, opts: SnapshotOpts) -> RepoSnapshot {
-    let (_index_path, stash_path) = git_dir_paths(&prop.path, &prop.flags);
+    let (_index_path, stash_path, _fetch_head_path) = git_dir_paths(&prop.path, &prop.flags);
     let stashed = if mtime_secs(&stash_path) > 0 {
         "stashed".into()
     } else {
