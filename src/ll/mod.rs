@@ -111,25 +111,33 @@ fn describe_pairs(
     let ctx = std::sync::Arc::new(FormatCtx::load(opts.no_colors));
     let name_width = repos.iter().map(|(k, _)| k.len()).max().unwrap_or(0) + 1;
     let jobs = opts.jobs.max(1);
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(jobs)
+        .build()
+        .unwrap_or_else(|_| rayon::ThreadPoolBuilder::new().build().unwrap());
 
     let work: Vec<RepoWork> = if opts.refresh {
-        repos
-            .iter()
-            .map(|(name, prop)| RepoWork {
-                name: name.clone(),
-                prop: prop.clone(),
-                fp: RepoFingerprint::empty(),
-                cached: None,
-            })
-            .collect()
+        pool.install(|| {
+            repos
+                .par_iter()
+                .map(|(name, prop)| RepoWork {
+                    name: name.clone(),
+                    prop: prop.clone(),
+                    fp: RepoFingerprint::empty(),
+                    cached: None,
+                })
+                .collect()
+        })
     } else {
-        let scanned: Vec<_> = repos
-            .par_iter()
-            .map(|(name, prop)| {
-                let fp = RepoFingerprint::read(prop).unwrap_or_else(RepoFingerprint::empty);
-                (name.clone(), prop.clone(), fp)
-            })
-            .collect();
+        let scanned = pool.install(|| {
+            repos
+                .par_iter()
+                .map(|(name, prop)| {
+                    let fp = RepoFingerprint::read(prop).unwrap_or_else(RepoFingerprint::empty);
+                    (name.clone(), prop.clone(), fp)
+                })
+                .collect::<Vec<_>>()
+        });
         scanned
             .into_iter()
             .map(|(name, prop, fp)| {
@@ -143,11 +151,6 @@ fn describe_pairs(
             })
             .collect()
     };
-
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(jobs)
-        .build()
-        .unwrap_or_else(|_| rayon::ThreadPoolBuilder::new().build().unwrap());
 
     let refresh = opts.refresh;
     let mut rows: Vec<LlRow> = pool.install(|| {

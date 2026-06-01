@@ -15,6 +15,13 @@ use crate::git_util::{is_git, relative_path_depth};
 use crate::info;
 use crate::ll::{self, LlOptions};
 
+fn default_ll_jobs() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .min(16)
+}
+
 #[derive(Parser)]
 #[command(name = "gita", version, about = "Manage multiple git repos")]
 pub struct Cli {
@@ -53,7 +60,7 @@ pub enum Commands {
         no_colors: bool,
         #[arg(short = 'g')]
         by_group: bool,
-        #[arg(long = "jobs", default_value_t = 64)]
+        #[arg(long = "jobs", default_value_t = default_ll_jobs())]
         jobs: usize,
         #[arg(long, help = "Bypass ll snapshot cache")]
         refresh: bool,
