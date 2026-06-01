@@ -170,10 +170,11 @@ pub async fn exec_git_cmd(
         return Ok(());
     }
 
-    let rt = tokio::runtime::Runtime::new()?;
     let mut handles = Vec::new();
     for (name, path, cmds) in per_repo_cmds {
-        handles.push(rt.spawn(async move { run_async(&name, &path, &cmds).await }));
+        handles.push(tokio::task::spawn(
+            async move { run_async(&name, &path, &cmds).await },
+        ));
     }
     let mut errors = Vec::new();
     for h in handles {
