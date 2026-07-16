@@ -44,14 +44,7 @@ pub fn run_ll(
 
     let mut cache_dirty = false;
     let lines = if opts.by_group {
-        run_by_group(
-            &filtered,
-            groups,
-            opts,
-            &mut cache,
-            snap_opts,
-            &mut cache_dirty,
-        )
+        run_by_group(&filtered, groups, opts, &mut cache, snap_opts, &mut cache_dirty)
     } else {
         describe_pairs(&filtered, opts, &mut cache, snap_opts, &mut cache_dirty)
     };

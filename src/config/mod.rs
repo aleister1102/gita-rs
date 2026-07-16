@@ -91,7 +91,7 @@ pub fn list_workspaces() -> Result<Vec<String>> {
         let entry = entry?;
         if entry.file_type()?.is_dir() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name == "." || name == ".." {
+            if name == "." || name == ".." || validate_workspace_name(&name).is_err() {
                 continue;
             }
             names.push(name);
@@ -123,7 +123,9 @@ pub fn validate_workspace_name(name: &str) -> Result<()> {
         anyhow::bail!("workspace name cannot be '.' or '..'");
     }
     let root = workspace_root();
-    if root.join(name).exists() && !root.join("workspaces").join(name).is_dir() {
+    let existing = root.join(name);
+    let workspaces_dir = root.join("workspaces");
+    if existing.exists() && existing != workspaces_dir && !workspaces_dir.join(name).is_dir() {
         anyhow::bail!("workspace name conflicts with an existing file in the config directory");
     }
     Ok(())
@@ -192,10 +194,10 @@ pub fn rename_workspace(old: &str, new: &str) -> Result<()> {
         anyhow::bail!("workspace already exists: {new}");
     }
     let is_active = current_workspace().as_deref() == Some(old);
-    fs::rename(&src, &dst)?;
     if is_active {
         fs::write(workspace_active_file(), new)?;
     }
+    fs::rename(&src, &dst)?;
     Ok(())
 }
 

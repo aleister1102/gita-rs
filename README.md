@@ -52,7 +52,8 @@ gita -v
 ## Workspaces
 
 Workspaces are isolated gita configurations. Each workspace has its own
-`repos.csv`, `groups.csv`, and settings, all stored under
+`repos.csv`, `groups.csv`, `color.csv`, `info.csv`, `layout.csv`, custom
+`cmds.json`, `ll-cache.json`, and context files, all stored under
 `~/.config/gita/workspaces/<name>/`. The root `~/.config/gita/` remains the
 `default` workspace and is used when no workspace is active.
 
