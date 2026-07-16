@@ -84,7 +84,11 @@ pub fn list_workspaces() -> Result<Vec<String>> {
     for entry in fs::read_dir(&ws_root)? {
         let entry = entry?;
         if entry.file_type()?.is_dir() {
-            names.push(entry.file_name().to_string_lossy().into_owned());
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name == "." || name == ".." {
+                continue;
+            }
+            names.push(name);
         }
     }
     names.sort();
@@ -106,11 +110,11 @@ pub fn validate_workspace_name(name: &str) -> Result<()> {
     if name == "default" {
         anyhow::bail!("'default' is reserved for the root workspace");
     }
+    if name.contains('/') || name.contains('\\') || name.contains('\0') {
+        anyhow::bail!("workspace name cannot contain path separators or null bytes");
+    }
     if name == "." || name == ".." {
         anyhow::bail!("workspace name cannot be '.' or '..'");
-    }
-    if name.contains('/') || name.contains('\\') || name.contains('\0') {
-        anyhow::bail!("workspace name cannot contain path separators");
     }
     let root = workspace_root();
     if root.join(name).exists() && !root.join("workspaces").join(name).is_dir() {
@@ -152,6 +156,7 @@ fn copy_config_files(src: &Path, dst: &Path) -> Result<()> {
 }
 
 pub fn remove_workspace(name: &str) -> Result<()> {
+    validate_workspace_name(name)?;
     if current_workspace().as_deref() == Some(name) {
         anyhow::bail!("cannot remove the active workspace; switch to another workspace first");
     }
@@ -167,6 +172,7 @@ pub fn rename_workspace(old: &str, new: &str) -> Result<()> {
     if old == "default" {
         anyhow::bail!("cannot rename the default workspace");
     }
+    validate_workspace_name(old)?;
     validate_workspace_name(new)?;
     let src = workspace_dir(old);
     if !src.is_dir() {
@@ -189,6 +195,7 @@ pub fn set_workspace(name: &str) -> Result<()> {
         clear_workspace()?;
         return Ok(());
     }
+    validate_workspace_name(name)?;
     let target = workspace_dir(name);
     if !target.is_dir() {
         anyhow::bail!("workspace not found: {name}");
