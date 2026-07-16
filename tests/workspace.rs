@@ -152,6 +152,18 @@ fn invalid_workspace_names_are_rejected() {
             !err.to_string().contains("already exists"),
             "'{bad}' should be rejected for invalid name, not duplicate"
         );
+        assert!(
+            gita::config::set_workspace(bad).is_err(),
+            "set_workspace('{bad}') should be rejected"
+        );
+        assert!(
+            gita::config::remove_workspace(bad).is_err(),
+            "remove_workspace('{bad}') should be rejected"
+        );
+        assert!(
+            gita::config::rename_workspace(bad, "x").is_err(),
+            "rename_workspace('{bad}', 'x') should be rejected"
+        );
     }
 
     clear_project_home();
@@ -183,6 +195,24 @@ fn stale_active_workspace_pointer_is_cleared() {
     // config_dir should fall back to root and current_workspace should be None
     assert_eq!(gita::config::config_dir(), gita::config::workspace_root());
     assert_eq!(gita::config::current_workspace(), None);
+
+    clear_project_home();
+}
+
+#[test]
+#[serial]
+fn corrupted_active_workspace_pointer_is_cleared() {
+    let tmp = TempDir::new().unwrap();
+    set_project_home(&tmp);
+
+    let root = gita::config::workspace_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("workspace"), "../\n").unwrap();
+
+    // config_dir should fall back to root and the corrupted pointer should be removed
+    assert_eq!(gita::config::config_dir(), root);
+    assert_eq!(gita::config::current_workspace(), None);
+    assert!(!root.join("workspace").exists());
 
     clear_project_home();
 }

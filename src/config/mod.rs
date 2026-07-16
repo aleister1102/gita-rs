@@ -57,6 +57,12 @@ fn current_workspace_name(root: &Path) -> Option<String> {
     fs::read_to_string(&p).ok().and_then(|s| {
         let name = s.trim();
         if name.is_empty() || name == "default" {
+            let _ = fs::remove_file(&p);
+            return None;
+        }
+        if validate_workspace_name(name).is_err() {
+            // corrupted pointer; clear it so we don't point outside workspaces/
+            let _ = fs::remove_file(&p);
             return None;
         }
         let ws = root.join("workspaces").join(name);
@@ -131,7 +137,10 @@ pub fn create_workspace(name: &str, from_current: bool) -> Result<()> {
     }
     fs::create_dir_all(&target)?;
     if from_current {
-        copy_config_files(&config_dir(), &target)?;
+        if let Err(e) = copy_config_files(&config_dir(), &target) {
+            let _ = fs::remove_dir_all(&target);
+            return Err(e);
+        }
     }
     Ok(())
 }
