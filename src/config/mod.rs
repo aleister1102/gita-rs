@@ -57,9 +57,15 @@ fn current_workspace_name(root: &Path) -> Option<String> {
     fs::read_to_string(&p).ok().and_then(|s| {
         let name = s.trim();
         if name.is_empty() || name == "default" {
-            None
-        } else {
+            return None;
+        }
+        let ws = root.join("workspaces").join(name);
+        if ws.is_dir() {
             Some(name.to_string())
+        } else {
+            // stale pointer; clear it so we don't fall back while still reporting it
+            let _ = fs::remove_file(&p);
+            None
         }
     })
 }
@@ -100,6 +106,9 @@ pub fn validate_workspace_name(name: &str) -> Result<()> {
     if name == "default" {
         anyhow::bail!("'default' is reserved for the root workspace");
     }
+    if name == "." || name == ".." {
+        anyhow::bail!("workspace name cannot be '.' or '..'");
+    }
     if name.contains('/') || name.contains('\\') || name.contains('\0') {
         anyhow::bail!("workspace name cannot contain path separators");
     }
@@ -112,17 +121,32 @@ pub fn validate_workspace_name(name: &str) -> Result<()> {
 
 pub fn create_workspace(name: &str, from_current: bool) -> Result<()> {
     validate_workspace_name(name)?;
-    let root = workspace_root();
-    let target = root.join("workspaces").join(name);
+    let target = workspace_dir(name);
+    if target.is_dir() {
+        anyhow::bail!("workspace already exists: {name}");
+    }
     fs::create_dir_all(&target)?;
     if from_current {
-        let current = config_dir();
-        for fname in ["repos.csv", "groups.csv"] {
-            let src = current.join(fname);
-            if src.is_file() {
-                fs::copy(&src, target.join(fname))?;
-            }
+        copy_config_files(&config_dir(), &target)?;
+    }
+    Ok(())
+}
+
+fn copy_config_files(src: &Path, dst: &Path) -> Result<()> {
+    if !src.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
         }
+        let fname = entry.file_name();
+        if fname == "workspace" {
+            // active-workspace pointer belongs to the root only
+            continue;
+        }
+        fs::copy(entry.path(), dst.join(&fname))?;
     }
     Ok(())
 }
@@ -152,8 +176,9 @@ pub fn rename_workspace(old: &str, new: &str) -> Result<()> {
     if dst.exists() {
         anyhow::bail!("workspace already exists: {new}");
     }
+    let is_active = current_workspace().as_deref() == Some(old);
     fs::rename(&src, &dst)?;
-    if current_workspace().as_deref() == Some(old) {
+    if is_active {
         fs::write(workspace_active_file(), new)?;
     }
     Ok(())

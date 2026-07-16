@@ -139,3 +139,88 @@ fn cli_workspace_show_and_switch() {
 
     clear_project_home();
 }
+
+#[test]
+#[serial]
+fn invalid_workspace_names_are_rejected() {
+    let tmp = TempDir::new().unwrap();
+    set_project_home(&tmp);
+
+    for bad in ["", ".", "..", "a/b", "a\\b"] {
+        let err = gita::config::create_workspace(bad, false).unwrap_err();
+        assert!(
+            !err.to_string().contains("already exists"),
+            "'{bad}' should be rejected for invalid name, not duplicate"
+        );
+    }
+
+    clear_project_home();
+}
+
+#[test]
+#[serial]
+fn create_workspace_fails_when_already_exists() {
+    let tmp = TempDir::new().unwrap();
+    set_project_home(&tmp);
+
+    gita::config::create_workspace("work", false).unwrap();
+    let err = gita::config::create_workspace("work", false).unwrap_err();
+    assert!(err.to_string().contains("already exists"));
+
+    clear_project_home();
+}
+
+#[test]
+#[serial]
+fn stale_active_workspace_pointer_is_cleared() {
+    let tmp = TempDir::new().unwrap();
+    set_project_home(&tmp);
+
+    gita::config::create_workspace("work", false).unwrap();
+    gita::config::set_workspace("work").unwrap();
+    fs::remove_dir_all(gita::config::workspace_dir("work")).unwrap();
+
+    // config_dir should fall back to root and current_workspace should be None
+    assert_eq!(gita::config::config_dir(), gita::config::workspace_root());
+    assert_eq!(gita::config::current_workspace(), None);
+
+    clear_project_home();
+}
+
+#[test]
+#[serial]
+fn from_current_copies_all_config_files() {
+    let tmp = TempDir::new().unwrap();
+    set_project_home(&tmp);
+
+    let root = gita::config::workspace_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("repos.csv"), "/tmp/a,repo-a,,\n").unwrap();
+    fs::write(root.join("groups.csv"), "g1:repo-a:\n").unwrap();
+    fs::write(root.join("color.csv"), "no_remote,white\n").unwrap();
+    fs::write(root.join("info.csv"), "branch,commit_msg\n").unwrap();
+
+    gita::config::create_workspace("work", true).unwrap();
+
+    let ws = root.join("workspaces").join("work");
+    assert_eq!(
+        fs::read_to_string(ws.join("repos.csv")).unwrap(),
+        "/tmp/a,repo-a,,\n"
+    );
+    assert_eq!(
+        fs::read_to_string(ws.join("groups.csv")).unwrap(),
+        "g1:repo-a:\n"
+    );
+    assert_eq!(
+        fs::read_to_string(ws.join("color.csv")).unwrap(),
+        "no_remote,white\n"
+    );
+    assert_eq!(
+        fs::read_to_string(ws.join("info.csv")).unwrap(),
+        "branch,commit_msg\n"
+    );
+    // active-workspace pointer should not be copied into the workspace
+    assert!(!ws.join("workspace").exists());
+
+    clear_project_home();
+}

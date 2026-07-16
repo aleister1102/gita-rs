@@ -57,7 +57,7 @@ Workspaces are isolated gita configurations. Each workspace has its own
 `default` workspace and is used when no workspace is active.
 
 ```bash
-gita workspace add work --from-current  # copy current repos/groups into new workspace
+gita workspace add work --from-current  # copy current workspace config into new workspace
 gita workspace use work                 # all later commands use the work workspace
 gita add /path/to/repo                  # registered in the work workspace
 gita workspace show                     # print active workspace
