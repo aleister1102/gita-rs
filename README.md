@@ -7,7 +7,7 @@ Rust reimplementation of [nosarthur/gita](https://github.com/nosarthur/gita): ma
 - **`gita ll`** - parallel repo status (one combined `git` shell script per repo on cache miss: porcelain status + `show-branch` subject + relative time, matching upstream gita), fingerprint cache in `ll-cache.json`, default **64** threads (`--jobs N`)
 - Default cold path uses **`git status -uno`** (no untracked scan); use **`--full-status`** for `?` markers
 - **`gita freeze` / `gita clone`** - export and restore repo sets (compatible with upstream freeze CSV)
-- Bookkeeping: `add` (`-r`, `-a`), `rm`, `rename`, `ls`, `clear`, `group`, `context`, `info`, `color`, `flags`
+- Bookkeeping: `add` (`-r`, `-a`), `rm`, `rename`, `ls`, `clear`, `group`, `context`, `info`, `color`, `flags`, `workspace`
 - Delegated commands from `cmds.json` (fetch, pull, `st`, …) with **tokio** async when multiple repos
 - `gita super` / `gita shell` passthrough
 - Config: `$GITA_PROJECT_HOME/gita`, `$XDG_CONFIG_HOME/gita`, or `~/.config/gita`
@@ -42,8 +42,31 @@ gita ll -g               # group headers
 gita freeze > repos.txt
 gita clone -f repos.txt
 gita clone -p -f repos.txt   # preserve paths from freeze file
+gita workspace add work       # create an isolated workspace
+gita workspace use work       # switch to it (repos/groups are scoped)
+gita workspace ls
+gita workspace use default    # switch back to the root workspace
 gita -v
 ```
+
+## Workspaces
+
+Workspaces are isolated gita configurations. Each workspace has its own
+`repos.csv`, `groups.csv`, `color.csv`, `info.csv`, `layout.csv`, custom
+`cmds.json`, `ll-cache.json`, and context files, all stored under
+`~/.config/gita/workspaces/<name>/`. The root `~/.config/gita/` remains the
+`default` workspace and is used when no workspace is active.
+
+```bash
+gita workspace add work --from-current  # copy current workspace config into new workspace
+gita workspace use work                 # all later commands use the work workspace
+gita add /path/to/repo                  # registered in the work workspace
+gita workspace show                     # print active workspace
+gita workspace rename work job          # rename a workspace
+gita workspace rm job                   # delete a workspace (cannot be active)
+```
+
+The active workspace is recorded in `~/.config/gita/workspace`.
 
 ## Shell completions
 

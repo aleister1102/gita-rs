@@ -22,7 +22,7 @@ pub struct GroupProp {
     pub path: String,
 }
 
-pub fn config_dir() -> PathBuf {
+pub fn workspace_root() -> PathBuf {
     if let Some(home) = std::env::var_os("GITA_PROJECT_HOME") {
         return PathBuf::from(home).join("gita");
     }
@@ -34,8 +34,196 @@ pub fn config_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".config/gita"))
 }
 
+pub fn config_dir() -> PathBuf {
+    let root = workspace_root();
+    if let Some(name) = current_workspace_name(&root) {
+        let ws = root.join("workspaces").join(&name);
+        if ws.is_dir() {
+            return ws;
+        }
+    }
+    root
+}
+
 pub fn config_path(name: &str) -> PathBuf {
     config_dir().join(name)
+}
+
+fn current_workspace_name(root: &Path) -> Option<String> {
+    let p = root.join("workspace");
+    if !p.is_file() {
+        return None;
+    }
+    fs::read_to_string(&p).ok().and_then(|s| {
+        let name = s.trim();
+        if name.is_empty() || name == "default" {
+            let _ = fs::remove_file(&p);
+            return None;
+        }
+        if validate_workspace_name(name).is_err() {
+            // corrupted pointer; clear it so we don't point outside workspaces/
+            let _ = fs::remove_file(&p);
+            return None;
+        }
+        let ws = root.join("workspaces").join(name);
+        if ws.is_dir() {
+            Some(name.to_string())
+        } else {
+            // stale pointer; clear it so we don't fall back while still reporting it
+            let _ = fs::remove_file(&p);
+            None
+        }
+    })
+}
+
+pub fn current_workspace() -> Option<String> {
+    current_workspace_name(&workspace_root())
+}
+
+pub fn list_workspaces() -> Result<Vec<String>> {
+    let root = workspace_root();
+    let ws_root = root.join("workspaces");
+    if !ws_root.is_dir() {
+        return Ok(vec![]);
+    }
+    let mut names = Vec::new();
+    for entry in fs::read_dir(&ws_root)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name == "." || name == ".." || validate_workspace_name(&name).is_err() {
+                continue;
+            }
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+pub fn workspace_dir(name: &str) -> PathBuf {
+    workspace_root().join("workspaces").join(name)
+}
+
+pub fn workspace_active_file() -> PathBuf {
+    workspace_root().join("workspace")
+}
+
+pub fn validate_workspace_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        anyhow::bail!("workspace name cannot be empty");
+    }
+    if name == "default" {
+        anyhow::bail!("'default' is reserved for the root workspace");
+    }
+    if name == "workspace" {
+        anyhow::bail!("'workspace' is reserved for the active-workspace pointer file");
+    }
+    if name.contains('/') || name.contains('\\') || name.contains('\0') {
+        anyhow::bail!("workspace name cannot contain path separators or null bytes");
+    }
+    if name == "." || name == ".." {
+        anyhow::bail!("workspace name cannot be '.' or '..'");
+    }
+    let root = workspace_root();
+    let existing = root.join(name);
+    let workspaces_dir = root.join("workspaces");
+    if existing.exists() && existing != workspaces_dir && !workspaces_dir.join(name).is_dir() {
+        anyhow::bail!("workspace name conflicts with an existing file in the config directory");
+    }
+    Ok(())
+}
+
+pub fn create_workspace(name: &str, from_current: bool) -> Result<()> {
+    validate_workspace_name(name)?;
+    let target = workspace_dir(name);
+    if target.is_dir() {
+        anyhow::bail!("workspace already exists: {name}");
+    }
+    fs::create_dir_all(&target)?;
+    if from_current {
+        if let Err(e) = copy_config_files(&config_dir(), &target) {
+            let _ = fs::remove_dir_all(&target);
+            return Err(e);
+        }
+    }
+    Ok(())
+}
+
+fn copy_config_files(src: &Path, dst: &Path) -> Result<()> {
+    if !src.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let fname = entry.file_name();
+        if fname == "workspace" {
+            // active-workspace pointer belongs to the root only
+            continue;
+        }
+        fs::copy(entry.path(), dst.join(&fname))?;
+    }
+    Ok(())
+}
+
+pub fn remove_workspace(name: &str) -> Result<()> {
+    validate_workspace_name(name)?;
+    if current_workspace().as_deref() == Some(name) {
+        anyhow::bail!("cannot remove the active workspace; switch to another workspace first");
+    }
+    let target = workspace_dir(name);
+    if !target.is_dir() {
+        anyhow::bail!("workspace not found: {name}");
+    }
+    fs::remove_dir_all(&target)?;
+    Ok(())
+}
+
+pub fn rename_workspace(old: &str, new: &str) -> Result<()> {
+    if old == "default" {
+        anyhow::bail!("cannot rename the default workspace");
+    }
+    validate_workspace_name(old)?;
+    validate_workspace_name(new)?;
+    let src = workspace_dir(old);
+    if !src.is_dir() {
+        anyhow::bail!("workspace not found: {old}");
+    }
+    let dst = workspace_dir(new);
+    if dst.exists() {
+        anyhow::bail!("workspace already exists: {new}");
+    }
+    let is_active = current_workspace().as_deref() == Some(old);
+    if is_active {
+        fs::write(workspace_active_file(), new)?;
+    }
+    fs::rename(&src, &dst)?;
+    Ok(())
+}
+
+pub fn set_workspace(name: &str) -> Result<()> {
+    if name == "default" {
+        clear_workspace()?;
+        return Ok(());
+    }
+    validate_workspace_name(name)?;
+    let target = workspace_dir(name);
+    if !target.is_dir() {
+        anyhow::bail!("workspace not found: {name}");
+    }
+    fs::write(workspace_active_file(), name)?;
+    Ok(())
+}
+
+pub fn clear_workspace() -> Result<()> {
+    let p = workspace_active_file();
+    if p.is_file() {
+        fs::remove_file(&p)?;
+    }
+    Ok(())
 }
 
 pub fn load_repos(skip_validation: bool) -> Result<HashMap<String, RepoProp>> {

@@ -7,8 +7,9 @@ use clap::{CommandFactory, Parser, Subcommand};
 use walkdir::WalkDir;
 
 use crate::config::{
-    self, delete_repo_from_groups, load_groups, load_repos, make_repo_name, write_groups,
-    write_repos, GroupProp, RepoProp,
+    self, create_workspace, current_workspace, delete_repo_from_groups, load_groups, load_repos,
+    make_repo_name, remove_workspace, rename_workspace, set_workspace, write_groups, write_repos,
+    GroupProp, RepoProp,
 };
 use crate::delegate::{self, CmdDef};
 use crate::git_util::{is_git, relative_path_depth};
@@ -134,6 +135,11 @@ pub enum Commands {
         #[arg(short = 'q', long = "quote-mode")]
         quote_mode: bool,
     },
+    #[command(about = "manage isolated gita workspaces")]
+    Workspace {
+        #[command(subcommand)]
+        cmd: Option<WorkspaceCommands>,
+    },
     #[command(about = "delegated git command", name = "delegate")]
     Delegate {
         name: String,
@@ -200,6 +206,26 @@ pub enum FlagsCommands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         flags: Vec<String>,
     },
+}
+
+#[derive(Subcommand)]
+pub enum WorkspaceCommands {
+    #[command(about = "Show current workspace")]
+    Show,
+    #[command(about = "List workspaces")]
+    Ls,
+    #[command(about = "Add a workspace")]
+    Add {
+        name: String,
+        #[arg(short = 'c', long = "from-current")]
+        from_current: bool,
+    },
+    #[command(about = "Remove a workspace")]
+    Rm { name: String },
+    #[command(about = "Switch to a workspace")]
+    Use { name: String },
+    #[command(about = "Rename a workspace")]
+    Rename { old: String, new: String },
 }
 
 pub fn run_with_delegate(argv: &[String], cmds: &HashMap<String, CmdDef>) -> Result<()> {
@@ -288,6 +314,7 @@ pub fn execute(cli: Cli, cmds: &HashMap<String, CmdDef>) -> Result<()> {
         }
         Some(Commands::Super { man, quote_mode }) => cmd_super(man, quote_mode, cmds),
         Some(Commands::Shell { man, quote_mode }) => cmd_shell(man, quote_mode),
+        Some(Commands::Workspace { cmd }) => cmd_workspace(cmd),
         Some(Commands::Delegate { name, repo }) => {
             if let Some(def) = cmds.get(&name) {
                 run_delegated_cmd(&name, def, &repo, cmds)
@@ -306,7 +333,7 @@ fn print_help(cmds: &HashMap<String, CmdDef>) {
     println!("gita {}", crate::VERSION);
     println!("sub-commands:");
     println!("  ll, ls, add, rm, rename, clear, group, context, info, color, flags");
-    println!("  super, shell");
+    println!("  workspace, super, shell");
     for (name, def) in cmds {
         println!("  {name}: {}", def.help);
     }
@@ -863,6 +890,42 @@ fn cmd_shell(man: Vec<String>, quote_mode: bool) -> Result<()> {
         let mut text = combined.to_string();
         text.push_str(&err);
         print!("{}", delegate::format_output(&text, name));
+    }
+    Ok(())
+}
+
+fn cmd_workspace(cmd: Option<WorkspaceCommands>) -> Result<()> {
+    match cmd {
+        None | Some(WorkspaceCommands::Show) => {
+            println!(
+                "{}",
+                current_workspace().unwrap_or_else(|| "default".to_string())
+            );
+        }
+        Some(WorkspaceCommands::Ls) => {
+            let names = config::list_workspaces()?;
+            if names.is_empty() {
+                println!("No workspaces found");
+            } else {
+                println!("{}", names.join(" "));
+            }
+        }
+        Some(WorkspaceCommands::Add { name, from_current }) => {
+            create_workspace(&name, from_current)?;
+            println!("Created workspace: {name}");
+        }
+        Some(WorkspaceCommands::Rm { name }) => {
+            remove_workspace(&name)?;
+            println!("Removed workspace: {name}");
+        }
+        Some(WorkspaceCommands::Use { name }) => {
+            set_workspace(&name)?;
+            println!("Switched to workspace: {name}");
+        }
+        Some(WorkspaceCommands::Rename { old, new }) => {
+            rename_workspace(&old, &new)?;
+            println!("Renamed workspace {old} to {new}");
+        }
     }
     Ok(())
 }
