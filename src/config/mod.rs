@@ -116,6 +116,9 @@ pub fn validate_workspace_name(name: &str) -> Result<()> {
     if name == "default" {
         anyhow::bail!("'default' is reserved for the root workspace");
     }
+    if name == "workspace" {
+        anyhow::bail!("'workspace' is reserved for the active-workspace pointer file");
+    }
     if name.contains('/') || name.contains('\\') || name.contains('\0') {
         anyhow::bail!("workspace name cannot contain path separators or null bytes");
     }

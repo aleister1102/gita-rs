@@ -63,6 +63,8 @@ fn workspace_add_copies_repos_and_groups() {
     let ws = root.join("workspaces").join("work");
     assert!(ws.join("repos.csv").is_file());
     assert!(ws.join("groups.csv").is_file());
+
+    gita::config::set_workspace("work").unwrap();
     let repos = gita::config::load_repos(true).unwrap();
     assert_eq!(repos["repo-a"].path, "/tmp/a");
 
@@ -213,6 +215,46 @@ fn corrupted_active_workspace_pointer_is_cleared() {
     assert_eq!(gita::config::config_dir(), root);
     assert_eq!(gita::config::current_workspace(), None);
     assert!(!root.join("workspace").exists());
+
+    clear_project_home();
+}
+
+#[test]
+#[serial]
+#[cfg(unix)]
+fn create_workspace_rolls_back_on_copy_failure() {
+    let tmp = TempDir::new().unwrap();
+    set_project_home(&tmp);
+
+    let root = gita::config::workspace_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("repos.csv"), "/tmp/a,repo-a,,\n").unwrap();
+    // Make a source file unreadable so copy_config_files fails.
+    let unreadable = root.join("color.csv");
+    fs::write(&unreadable, "no_remote,white\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&unreadable).unwrap().permissions();
+        perms.set_mode(0o000);
+        fs::set_permissions(&unreadable, perms).unwrap();
+    }
+
+    let err = gita::config::create_workspace("work", true).unwrap_err();
+    assert!(
+        err.to_string().to_lowercase().contains("permission")
+            || err.to_string().to_lowercase().contains("denied")
+            || err.to_string().to_lowercase().contains("access"),
+        "expected permission error, got: {err}"
+    );
+    assert!(!gita::config::workspace_dir("work").exists());
+
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(&unreadable).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o644);
+        fs::set_permissions(&unreadable, perms).unwrap();
+    }
 
     clear_project_home();
 }
