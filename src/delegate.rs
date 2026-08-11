@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::io::Write;
 use std::process::Stdio;
 
 use anyhow::Result;
 use serde::Deserialize;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 
 use crate::config::{GroupProp, RepoProp};
@@ -94,6 +96,112 @@ pub fn format_output(s: &str, prefix: &str) -> String {
         + if s.ends_with('\n') { "\n" } else { "" }
 }
 
+fn write_records<W: Write>(
+    writer: &mut W,
+    repo_name: &str,
+    pending: &mut Vec<u8>,
+    trailing_cr: &mut bool,
+    chunk: &[u8],
+    eof: bool,
+) -> std::io::Result<()> {
+    if eof {
+        if !pending.is_empty() {
+            writer.write_all(repo_name.as_bytes())?;
+            writer.write_all(b": ")?;
+            writer.write_all(pending)?;
+            pending.clear();
+        }
+        return Ok(());
+    }
+    let mut start = 0;
+    if *trailing_cr {
+        if chunk.first() == Some(&b'\n') {
+            writer.write_all(b"\n")?;
+            start = 1;
+        }
+        *trailing_cr = false;
+    }
+    let mut i = start;
+    while i < chunk.len() {
+        if chunk[i] == b'\n' {
+            writer.write_all(repo_name.as_bytes())?;
+            writer.write_all(b": ")?;
+            writer.write_all(pending)?;
+            writer.write_all(&chunk[start..=i])?;
+            pending.clear();
+            start = i + 1;
+        } else if chunk[i] == b'\r' {
+            let end = if i + 1 < chunk.len() && chunk[i + 1] == b'\n' {
+                i + 1
+            } else {
+                i
+            };
+            writer.write_all(repo_name.as_bytes())?;
+            writer.write_all(b": ")?;
+            writer.write_all(pending)?;
+            writer.write_all(&chunk[start..=end])?;
+            pending.clear();
+            start = end + 1;
+            i = end;
+        }
+        i += 1;
+    }
+    if start < chunk.len() {
+        pending.extend_from_slice(&chunk[start..]);
+    }
+    if chunk.last() == Some(&b'\r') {
+        *trailing_cr = true;
+    }
+    Ok(())
+}
+
+async fn stream_output<R: AsyncRead + Unpin>(reader: R, repo_name: &str) {
+    let mut reader = reader;
+    let mut buf = [0u8; 8192];
+    let mut pending: Vec<u8> = Vec::new();
+    let mut trailing_cr = false;
+    loop {
+        let n = match reader.read(&mut buf).await {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(_) => return,
+        };
+        let stdout = std::io::stdout();
+        let mut lock = stdout.lock();
+        if write_records(
+            &mut lock,
+            repo_name,
+            &mut pending,
+            &mut trailing_cr,
+            &buf[..n],
+            false,
+        )
+        .is_err()
+        {
+            return;
+        }
+        if lock.flush().is_err() {
+            return;
+        }
+        drop(lock);
+    }
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    if write_records(
+        &mut lock,
+        repo_name,
+        &mut pending,
+        &mut trailing_cr,
+        &[],
+        true,
+    )
+    .is_err()
+    {
+        return;
+    }
+    let _ = lock.flush();
+}
+
 pub async fn run_async(repo_name: &str, path: &str, cmds: &[String]) -> Option<String> {
     let mut cmd = Command::new(&cmds[0]);
     for arg in &cmds[1..] {
@@ -103,20 +211,18 @@ pub async fn run_async(repo_name: &str, path: &str, cmds: &[String]) -> Option<S
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let child = cmd.spawn().ok()?;
-    let output = child.wait_with_output().await.ok()?;
-    if let Ok(stdout) = String::from_utf8(output.stdout) {
-        if !stdout.is_empty() {
-            print!("{}", format_output(&stdout, repo_name));
+    let mut child = cmd.spawn().ok()?;
+    let stdout = child.stdout.take()?;
+    let stderr = child.stderr.take()?;
+    let (_, _, status) = tokio::join!(
+        stream_output(stdout, repo_name),
+        stream_output(stderr, repo_name),
+        child.wait(),
+    );
+    if let Ok(status) = status {
+        if !status.success() {
+            return Some(path.to_string());
         }
-    }
-    if let Ok(stderr) = String::from_utf8(output.stderr) {
-        if !stderr.is_empty() {
-            print!("{}", format_output(&stderr, repo_name));
-        }
-    }
-    if !output.status.success() {
-        return Some(path.to_string());
     }
     None
 }
@@ -187,4 +293,93 @@ pub async fn exec_git_cmd(
         let _ = run_sync(&path, base_cmd, shell);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::write_records;
+
+    #[test]
+    fn write_records_handles_cr_lf_chunk_boundaries_and_eof() {
+        let mut out = Vec::new();
+        let mut pending = Vec::new();
+        let mut trailing_cr = false;
+
+        write_records(
+            &mut out,
+            "alpha",
+            &mut pending,
+            &mut trailing_cr,
+            b"line\n",
+            false,
+        )
+        .unwrap();
+        write_records(
+            &mut out,
+            "alpha",
+            &mut pending,
+            &mut trailing_cr,
+            b"a\rb\n",
+            false,
+        )
+        .unwrap();
+        write_records(
+            &mut out,
+            "alpha",
+            &mut pending,
+            &mut trailing_cr,
+            b"c\r\n",
+            false,
+        )
+        .unwrap();
+        write_records(
+            &mut out,
+            "alpha",
+            &mut pending,
+            &mut trailing_cr,
+            b"d\r",
+            false,
+        )
+        .unwrap();
+        write_records(
+            &mut out,
+            "alpha",
+            &mut pending,
+            &mut trailing_cr,
+            b"\ne\n",
+            false,
+        )
+        .unwrap();
+
+        let mut big = vec![b'x'; 8191];
+        big.push(b'\n');
+        write_records(
+            &mut out,
+            "alpha",
+            &mut pending,
+            &mut trailing_cr,
+            &big,
+            false,
+        )
+        .unwrap();
+
+        write_records(
+            &mut out,
+            "alpha",
+            &mut pending,
+            &mut trailing_cr,
+            b"tail",
+            false,
+        )
+        .unwrap();
+        write_records(&mut out, "alpha", &mut pending, &mut trailing_cr, b"", true).unwrap();
+        write_records(&mut out, "alpha", &mut pending, &mut trailing_cr, b"", true).unwrap();
+
+        let mut expected =
+            b"alpha: line\nalpha: a\ralpha: b\nalpha: c\r\nalpha: d\r\nalpha: e\n".to_vec();
+        expected.extend_from_slice(b"alpha: ");
+        expected.extend(std::iter::repeat_n(b'x', 8191));
+        expected.extend_from_slice(b"\nalpha: tail");
+        assert_eq!(out, expected);
+    }
 }
