@@ -21,6 +21,11 @@
     "allow_all": true,
     "help": "fetch remote update"
   },
+  "fetch-blobless": {
+    "cmd": "git fetch --progress --filter=blob:none",
+    "allow_all": true,
+    "help": "fetch remote updates without file contents"
+  },
   "last": {
     "cmd": "git log -1 HEAD",
     "help": "show log information of HEAD"
@@ -52,6 +57,11 @@
     "cmd": "git pull --progress",
     "allow_all": true,
     "help": "pull remote updates"
+  },
+  "pull-blobless": {
+    "cmd": ["git fetch --progress --filter=blob:none", "git pull --progress"],
+    "allow_all": true,
+    "help": "pull remote updates, downloading only the file contents the checkout needs"
   },
   "push": {
     "cmd": "git push",

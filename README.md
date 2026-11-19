@@ -9,6 +9,7 @@ Rust reimplementation of [nosarthur/gita](https://github.com/nosarthur/gita): ma
 - **`gita freeze` / `gita clone`** - export and restore repo sets (compatible with upstream freeze CSV)
 - Bookkeeping: `add` (`-r`, `-a`), `rm`, `rename`, `ls`, `clear`, `group`, `context`, `info`, `color`, `flags`, `workspace`
 - Delegated commands from `cmds.json` (fetch, pull, `st`, …) with **tokio** async when multiple repos
+- **`gita fetch-blobless` / `gita pull-blobless`** - fetch commits and trees but skip file contents (`git fetch --filter=blob:none`)
 - `gita super` / `gita shell` passthrough
 - Config: `$GITA_PROJECT_HOME/gita`, `$XDG_CONFIG_HOME/gita`, or `~/.config/gita`
 
@@ -46,6 +47,8 @@ gita workspace add work       # create an isolated workspace
 gita workspace use work       # switch to it (repos/groups are scoped)
 gita workspace ls
 gita workspace use default    # switch back to the root workspace
+gita fetch-blobless           # fetch all repos without file contents
+gita pull-blobless mygroup    # blobless fetch, then pull
 gita -v
 ```
 
@@ -67,6 +70,16 @@ gita workspace rm job                   # delete a workspace (cannot be active)
 ```
 
 The active workspace is recorded in `~/.config/gita/workspace`.
+
+## Blobless fetch and pull
+
+`gita fetch-blobless [repos]` runs `git fetch --progress --filter=blob:none` in each repo. Git downloads the new commits and trees, so `gita ll` ahead/behind counts stay correct, and skips file contents. Git downloads a file's contents later, when a command such as `checkout`, `diff`, or `blame` needs them.
+
+`gita pull-blobless [repos]` runs the same filtered fetch and then `git pull --progress`, because `git pull` does not accept `--filter`. The pull downloads only the file contents that the checkout needs. When the fetch fails, gita skips the pull.
+
+The first filtered fetch turns the repo into a [partial clone](https://git-scm.com/docs/partial-clone): Git records `remote.<name>.promisor` and `remote.<name>.partialclonefilter` in the repo config. After that, plain `gita fetch` and `gita pull` stay blobless for that remote. The remote must support object filters, as GitHub and GitLab do. A server that does not support them sends everything.
+
+To define your own multi-step command, set `cmd` to a list in `~/.config/gita/cmds.json`. gita runs the list in order in each repo and stops at the first command that fails.
 
 ## Shell completions
 
