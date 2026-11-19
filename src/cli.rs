@@ -370,16 +370,20 @@ fn run_delegated_cmd(
         )
     };
 
-    let base_cmd: Vec<String> = if def.shell {
-        vec![def.cmd.clone()]
-    } else {
-        def.cmd.split_whitespace().map(|s| s.to_string()).collect()
-    };
+    let steps: Vec<Vec<String>> = def
+        .cmd
+        .iter()
+        .map(|step| {
+            if def.shell {
+                vec![step.clone()]
+            } else {
+                step.split_whitespace().map(|s| s.to_string()).collect()
+            }
+        })
+        .collect();
     let disable = blacklist.contains(name) || def.disable_async;
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(delegate::exec_git_cmd(
-        &chosen, &base_cmd, disable, def.shell,
-    ))
+    rt.block_on(delegate::exec_git_cmd(&chosen, &steps, disable, def.shell))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -859,7 +863,7 @@ fn cmd_super(man: Vec<String>, quote_mode: bool, cmds: &HashMap<String, CmdDef>)
     let blacklist: HashSet<String> = delegate::async_blacklist(cmds).into_iter().collect();
     let disable = blacklist.contains("super");
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(delegate::exec_git_cmd(&chosen, &base, disable, false))
+    rt.block_on(delegate::exec_git_cmd(&chosen, &[base], disable, false))
 }
 
 fn cmd_shell(man: Vec<String>, quote_mode: bool) -> Result<()> {

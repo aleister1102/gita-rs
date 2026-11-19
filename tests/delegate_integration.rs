@@ -204,3 +204,104 @@ fn network_commands_force_progress() {
     }
     std::env::remove_var("GITA_PROJECT_HOME");
 }
+
+const BLOBLESS_FETCH: &str = "fetch --progress --filter=blob:none";
+
+/// Runs gita with a fake git that appends its argv to `<log_dir>/<repo dir name>`
+/// and fails when an argument equals `fail_on`.
+fn run_logging_git_args(tmp: &TempDir, log_dir: &Path, fail_on: &str, args: &[&str]) {
+    let fake_dir = tmp.path().join("fakebin");
+    write_fake_git(
+        &fake_dir,
+        r#"printf '%s\n' "$*" >> "$GITA_ARG_LOG_DIR/$(basename "$PWD")"
+for arg; do
+    if [ "$arg" = "$GITA_FAIL_ON" ]; then exit 1; fi
+done
+"#,
+    );
+    fs::create_dir_all(log_dir).unwrap();
+    Command::new(env!("CARGO_BIN_EXE_gita"))
+        .args(args)
+        .env("GITA_PROJECT_HOME", tmp.path())
+        .env("GITA_ARG_LOG_DIR", log_dir)
+        .env("GITA_FAIL_ON", fail_on)
+        .env("PATH", fake_path_env(&fake_dir))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .status()
+        .unwrap();
+}
+
+fn logged_args(log_dir: &Path, repo: &str) -> Vec<String> {
+    fs::read_to_string(log_dir.join(repo))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+#[serial]
+fn blobless_commands_filter_the_fetch_and_keep_repo_flags() {
+    let tmp = setup_then_clean();
+    write_repo_config(&tmp);
+    let repos_csv = tmp.path().join("gita").join("repos.csv");
+    let with_flags = fs::read_to_string(&repos_csv)
+        .unwrap()
+        .replace(",beta,,", ",beta,,-c gita.test=1");
+    fs::write(&repos_csv, with_flags).unwrap();
+
+    let fetch_log = tmp.path().join("args-fetch-blobless");
+    run_logging_git_args(&tmp, &fetch_log, "", &["fetch-blobless"]);
+    assert_eq!(logged_args(&fetch_log, "alpha"), [BLOBLESS_FETCH]);
+    assert_eq!(
+        logged_args(&fetch_log, "beta"),
+        [format!("-c gita.test=1 {BLOBLESS_FETCH}")]
+    );
+
+    let pull_log = tmp.path().join("args-pull-blobless");
+    run_logging_git_args(&tmp, &pull_log, "", &["pull-blobless"]);
+    assert_eq!(
+        logged_args(&pull_log, "alpha"),
+        [BLOBLESS_FETCH, "pull --progress"]
+    );
+    assert_eq!(
+        logged_args(&pull_log, "beta"),
+        [
+            format!("-c gita.test=1 {BLOBLESS_FETCH}"),
+            "-c gita.test=1 pull --progress".to_string()
+        ]
+    );
+
+    let single_log = tmp.path().join("args-pull-blobless-single");
+    run_logging_git_args(&tmp, &single_log, "", &["pull-blobless", "alpha"]);
+    assert_eq!(
+        logged_args(&single_log, "alpha"),
+        [BLOBLESS_FETCH, "pull --progress"]
+    );
+    assert!(logged_args(&single_log, "beta").is_empty());
+    std::env::remove_var("GITA_PROJECT_HOME");
+}
+
+#[test]
+#[serial]
+fn pull_blobless_skips_the_pull_when_the_fetch_fails() {
+    let tmp = setup_then_clean();
+    write_repo_config(&tmp);
+
+    for (label, args) in [
+        ("all", vec!["pull-blobless"]),
+        ("single", vec!["pull-blobless", "alpha"]),
+    ] {
+        let log_dir = tmp.path().join(format!("args-fail-{label}"));
+        run_logging_git_args(&tmp, &log_dir, "fetch", &args);
+        let logged = logged_args(&log_dir, "alpha");
+        assert!(!logged.is_empty(), "{label}: git never ran");
+        assert!(
+            logged.iter().all(|line| line == BLOBLESS_FETCH),
+            "{label}: ran a command after the failed fetch: {logged:?}"
+        );
+    }
+    std::env::remove_var("GITA_PROJECT_HOME");
+}
