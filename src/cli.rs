@@ -410,10 +410,18 @@ fn cmd_add(
             search_paths.push(abs.to_string_lossy().to_string());
         }
     }
-    let existing: HashSet<_> = repos.values().map(|r| r.path.as_str()).collect();
+    // Stored paths can differ from the canonical form by a symlink or by letter case.
+    let existing: HashSet<PathBuf> = repos
+        .values()
+        .map(|r| {
+            Path::new(&r.path)
+                .canonicalize()
+                .unwrap_or_else(|_| PathBuf::from(&r.path))
+        })
+        .collect();
     let mut new_paths: HashSet<String> = HashSet::new();
     for p in search_paths {
-        if is_git(&p, bare, skip_submodule) && !existing.contains(p.as_str()) {
+        if is_git(&p, bare, skip_submodule) && !existing.contains(Path::new(&p)) {
             new_paths.insert(p);
         }
     }
